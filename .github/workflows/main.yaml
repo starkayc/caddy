@@ -32,6 +32,7 @@ jobs:
         password: ${{ secrets.DOCKER_TOKEN }}
 
     - name: Prepare Environment Outputs
+      shell: sh
       run: |
         set -eu
 
@@ -49,6 +50,10 @@ jobs:
         tags: |
           ghcr.io/${{ env.GHCR_REPOSITORY }}:${{ env.VERSION }}
           ${{ env.DH_REPOSITORY }}:${{ env.VERSION }}
+          ghcr.io/${{ env.GHCR_REPOSITORY }}:v${{ env.VERSION }}
+          ${{ env.DH_REPOSITORY }}:v${{ env.VERSION }}
+          ghcr.io/${{ env.GHCR_REPOSITORY }}:latest
+          ${{ env.DH_REPOSITORY }}:latest
         build-args: |
           CADDY_VERSION=${{ env.VERSION }}
         push: true
