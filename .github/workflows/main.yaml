@@ -1,0 +1,53 @@
+name: Build and Push Docker Image
+on:
+  schedule:
+    - daily
+  workflow_dispatch:
+  
+jobs:
+  build-and-push-github:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        show-progress: false
+        submodules: recursive
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+    - name: Login to ghcr.io
+      uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GHCR_TOKEN }}
+
+    - name: Login to DockerHub
+      uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKER_TOKEN }}
+
+    - name: Prepare Environment Outputs
+      shell: sh
+      run: |
+        set -eu
+
+        echo "GHCR_REPOSITORY=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+        echo "DH_REPOSITORY=$(echo ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+        export VERSION=$(curl --silent "https://api.github.com/repos/caddyserver/caddy/releases/latest" | grep -Po "(?<=\"tag_name\": \").*(?=\")")
+        echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+    - name: Build and publish Docker image from Dockerfile
+      uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+      with:
+        context: .
+        provenance: true
+        sbom: true
+        tags: |
+          ghcr.io/${{ env.GHCR_REPOSITORY }}:${{ env.VERSION }}
+          ${{ env.DH_REPOSITORY }}:${{ env.VERSION }}
+        push: true
