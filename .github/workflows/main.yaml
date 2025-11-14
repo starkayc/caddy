@@ -38,7 +38,7 @@ jobs:
 
         echo "GHCR_REPOSITORY=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
         echo "DH_REPOSITORY=$(echo ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
-        export VERSION=$(curl --silent "https://api.github.com/repos/caddyserver/caddy/releases/latest" | grep -Po "(?<=\"tag_name\": \").*(?=\")")
+        export VERSION=$(curl --silent "https://api.github.com/repos/caddyserver/caddy/releases/latest" | grep -Po "(?<=\"tag_name\": \").*(?=\")" | cut -d'v' -f2)
         echo "VERSION=${VERSION}" >> $GITHUB_ENV
 
     - name: Build and publish Docker image from Dockerfile
