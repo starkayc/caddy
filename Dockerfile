@@ -1,3 +1,4 @@
+ARG CADDY_VERSION
 FROM caddy:${CADDY_VERSION}-builder AS builder
 
 RUN xcaddy build \
