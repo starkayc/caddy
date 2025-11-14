@@ -32,7 +32,6 @@ jobs:
         password: ${{ secrets.DOCKER_TOKEN }}
 
     - name: Prepare Environment Outputs
-      shell: sh
       run: |
         set -eu
 
