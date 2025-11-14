@@ -50,4 +50,6 @@ jobs:
         tags: |
           ghcr.io/${{ env.GHCR_REPOSITORY }}:${{ env.VERSION }}
           ${{ env.DH_REPOSITORY }}:${{ env.VERSION }}
+        build-args: |
+          CADDY_VERSION=${{ env.VERSION }}
         push: true
