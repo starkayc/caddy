@@ -61,11 +61,40 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Upstream latest is Caddy ${version}"
 
+      - name: Confirm upstream image is published
+        id: image
+        env:
+          UPSTREAM: ${{ steps.upstream.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # The Dockerfile builds FROM caddy:${version}-builder on docker.io, and upstream
+          # publishes the GitHub release hours before the matching Docker Hub tags exist.
+          # Bumping on the release alone produces a build that cannot resolve its base image.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            "https://hub.docker.com/v2/repositories/library/caddy/tags/${UPSTREAM}-builder" || true)
+
+          case "${code}" in
+            200)
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "docker.io/library/caddy:${UPSTREAM}-builder is published"
+              ;;
+            404)
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              echo "docker.io/library/caddy:${UPSTREAM}-builder is not published yet"
+              ;;
+            *)
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::Could not confirm the base image for Caddy ${UPSTREAM} (HTTP ${code}) - keeping the current pin"
+              ;;
+          esac
+
       - name: Compare versions
         id: compare
         env:
           PINNED: ${{ steps.pinned.outputs.version }}
           UPSTREAM: ${{ steps.upstream.outputs.version }}
+          IMAGE_PUBLISHED: ${{ steps.image.outputs.published }}
         run: |
           set -euo pipefail
 
@@ -76,6 +105,14 @@ jobs:
               echo "### Caddy version sync"
               echo
               echo "No change. Dockerfile is already pinned to \`${PINNED}\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${IMAGE_PUBLISHED}" != "true" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Caddy ${UPSTREAM} is released but its Docker Hub image is missing - keeping ${PINNED} pinned."
+            {
+              echo "### Caddy version sync"
+              echo
+              echo "Caddy \`${UPSTREAM}\` is released upstream, but \`caddy:${UPSTREAM}-builder\` is not on Docker Hub yet. Kept \`${PINNED}\` pinned; the next run retries."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -99,6 +136,7 @@ jobs:
           git diff -- Dockerfile
 
       - name: Commit and push bump
+        id: push
         if: steps.compare.outputs.changed == 'true'
         env:
           PINNED: ${{ steps.pinned.outputs.version }}
@@ -113,21 +151,65 @@ jobs:
           git commit -m "chore(dockerfile): bump Caddy from ${PINNED} to ${UPSTREAM}"
           git push origin HEAD:main
 
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Trigger image build
         if: steps.compare.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.pinned.outputs.version }}
           UPSTREAM: ${{ steps.upstream.outputs.version }}
+          SHA: ${{ steps.push.outputs.sha }}
         run: |
           set -euo pipefail
 
           # A GITHUB_TOKEN push does not fire push-triggered workflows; workflow_dispatch is exempt.
-          curl -fsSL -X POST \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/main.yaml/dispatches" \
-            -d '{"ref":"main"}'
+          # The POST is not idempotent, so it goes out without --retry: a POST that did land and
+          # was then retried queues a second build of the same image. Whether the build really
+          # started is answered by the run list, never by curl's exit status.
+          post_dispatch() {
+            curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/main.yaml/dispatches" \
+              -d '{"ref":"main"}' || true
+          }
+
+          find_run() {
+            count=$(curl -fsSL \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/main.yaml/runs?event=workflow_dispatch&per_page=10" \
+              | jq -r --arg sha "${SHA}" '[.workflow_runs[] | select(.head_sha == $sha)] | length' 2>/dev/null || echo 0)
+            [ "${count}" != "0" ]
+          }
+
+          wait_for_run() {
+            for _ in 1 2 3 4 5; do
+              find_run && return 0
+              sleep 3
+            done
+            return 1
+          }
+
+          code=$(post_dispatch)
+
+          if [ "${code}" != "204" ]; then
+            if wait_for_run; then
+              # A failed POST can still have created the run: the connection can die after the
+              # server has acted, and then curl reports failure for a dispatch that worked.
+              echo "Dispatch POST returned HTTP ${code}, but a run for ${SHA} exists - build is running."
+            else
+              echo "Dispatch POST returned HTTP ${code} and no run exists yet - retrying once."
+              code=$(post_dispatch)
+              if ! wait_for_run; then
+                echo "::error::main.yaml was not dispatched (last HTTP ${code}); no workflow_dispatch run for ${SHA}"
+                exit 1
+              fi
+            fi
+          fi
 
           echo "Dispatched main.yaml to build Caddy ${UPSTREAM}"
           {
