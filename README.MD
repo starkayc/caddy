@@ -41,7 +41,7 @@ A minimal one to get started:
 
 ```caddyfile
 example.com {
-    respond "Hello!"
+	respond "Hello!"
 }
 ```
 
@@ -59,12 +59,36 @@ docker network create frontend
 
 ### 6. Create the data directories
 
-The image runs as a non-root user, so it can't create these folders itself.
-Make them first and hand them over:
+The image runs as a non-root user (UID 65532), so it can't create these folders
+itself. Make them first:
 
 ```bash
 mkdir -p app_data/srv app_data/acme app_data/logs app_data/crowdsec/db
+```
+
+Now hand them to the container's user. How depends on your host.
+
+On Linux:
+
+```bash
 sudo chown -R 65532:65532 app_data
+```
+
+On macOS with OrbStack or Docker Desktop, **do not** run that command. Both tools
+map your own account into the container, so a folder owned by any other uid -
+including 65532 - is read-only to the container, even for root. Leave the folders
+owned by you, and undo the chown if you already ran it:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" app_data
+```
+
+Check it: after `docker compose up -d`, Caddy must have created its storage folder
+and the log must be clean:
+
+```bash
+ls app_data/acme                                        # shows a 'caddy' directory
+docker compose logs caddy | grep -c 'permission denied' # prints 0
 ```
 
 ### 7. Start it
@@ -141,7 +165,7 @@ If you want Caddy to issue certificates through Cloudflare (so it can do DNS-01 
 
 ```caddyfile
 tls {
-    dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 }
 ```
 
@@ -156,27 +180,32 @@ docker compose exec crowdsec cscli bouncers add caddy-bouncer
 
 Copy the key it prints into `.env` (`CROWDSEC_API_KEY`).
 
+> CrowdSec's data folder follows the same ownership rule as step 6: on Linux give
+> it to GID 1000 (`sudo chown -R 1000:1000 app_data/crowdsec`), on macOS/OrbStack
+> leave it owned by you. The wrong owner shows up as
+> `ln: /var/lib/crowdsec/data/*.mmdb: Permission denied` in a restart loop.
+
 **Step 2 — add CrowdSec to your `Caddyfile`:**
 
 ```caddyfile
 {
-    admin off
-    servers {
-        trusted_proxies cloudflare
-        client_ip_headers Cf-Connecting-Ip X-Forwarded-For
-    }
-    order crowdsec before respond
-    crowdsec {
-        api_url http://crowdsec:8080
-        api_key <your_bouncer_key>
-        ticker_interval 5s
-        appsec_url http://crowdsec:7422
-    }
+	admin off
+	servers {
+		trusted_proxies cloudflare
+		client_ip_headers Cf-Connecting-Ip X-Forwarded-For
+	}
+	order crowdsec before respond
+	crowdsec {
+		api_url http://crowdsec:8080
+		api_key <your_bouncer_key>
+		ticker_interval 5s
+		appsec_url http://crowdsec:7422
+	}
 }
 
 example.com {
-    crowdsec
-    respond "Hello!"
+	crowdsec
+	respond "Hello!"
 }
 ```
 
