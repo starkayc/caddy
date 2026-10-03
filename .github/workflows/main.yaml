@@ -86,18 +86,41 @@ jobs:
           docker run --rm "${IMAGE}" caddy list-modules \
             | grep -E 'crowdsec|cloudflare|docker_proxy'
 
-          mkdir -p /tmp/caddytest
+          # Mount what the README tells users to mount, owned the way Linux needs
+          # it (the container runs as UID 65532), so a broken image-side
+          # assumption about those directories fails here instead of on a
+          # user's server.
+          mkdir -p /tmp/caddytest/data /tmp/caddytest/logs /tmp/caddytest/srv
+          sudo chown -R 65532:65532 /tmp/caddytest
           printf ':80 {\n\trespond "ok"\n}\n' > /tmp/caddytest/Caddyfile
           docker run -d --name caddytest \
             --cap-add NET_BIND_SERVICE \
             -p 8080:80 \
             -v /tmp/caddytest/Caddyfile:/etc/caddy/Caddyfile \
+            -v /tmp/caddytest/data:/data \
+            -v /tmp/caddytest/logs:/var/log/caddy \
+            -v /tmp/caddytest/srv:/srv \
             "${IMAGE}"
           for i in $(seq 1 20); do
             curl -fsS http://localhost:8080 | grep -q ok && break
             sleep 1
           done
           curl -fsS http://localhost:8080 | grep -q ok
+
+          # Caddy creates /data/caddy during startup storage maintenance, so a
+          # missing directory or a "permission denied" line in the log means the
+          # data directory contract regressed.
+          for i in $(seq 1 20); do
+            [ -d /tmp/caddytest/data/caddy ] && break
+            sleep 1
+          done
+          if [ ! -d /tmp/caddytest/data/caddy ] \
+            || docker logs caddytest 2>&1 | grep -q 'permission denied'; then
+            echo "::error::caddy could not use the bind-mounted directories"
+            docker logs caddytest 2>&1 | tail -20
+            exit 1
+          fi
+
           docker rm -f caddytest
 
       - name: Build and publish Docker image from Dockerfile
