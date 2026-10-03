@@ -1,4 +1,4 @@
-ARG CADDY_VERSION=2.11.6
+ARG CADDY_VERSION=2.11.7
 # Supplies the Go toolchain and xcaddy only; the build target is CADDY_VERSION
 # below. Leave this at an older release until a build fails on a newer Go.
 ARG CADDY_BUILDER_VERSION=2.11.6
