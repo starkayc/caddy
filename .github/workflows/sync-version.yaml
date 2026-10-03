@@ -61,31 +61,31 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Upstream latest is Caddy ${version}"
 
-      - name: Confirm upstream image is published
-        id: image
+      - name: Confirm the release is fetchable as a Go module
+        id: module
         env:
           UPSTREAM: ${{ steps.upstream.outputs.version }}
         run: |
           set -euo pipefail
 
-          # The Dockerfile builds FROM caddy:${version}-builder on docker.io, and upstream
-          # publishes the GitHub release hours before the matching Docker Hub tags exist.
-          # Bumping on the release alone produces a build that cannot resolve its base image.
+          # xcaddy resolves the pin through the Go module proxy, so that - not the Docker Hub
+          # builder image - is what the build needs to exist. The Dockerfile takes its toolchain
+          # from CADDY_BUILDER_VERSION, which is deliberately not the version being built.
           code=$(curl -sS -o /dev/null -w '%{http_code}' \
-            "https://hub.docker.com/v2/repositories/library/caddy/tags/${UPSTREAM}-builder" || true)
+            "https://proxy.golang.org/github.com/caddyserver/caddy/v2/@v/v${UPSTREAM}.info" || true)
 
           case "${code}" in
             200)
-              echo "published=true" >> "$GITHUB_OUTPUT"
-              echo "docker.io/library/caddy:${UPSTREAM}-builder is published"
+              echo "available=true" >> "$GITHUB_OUTPUT"
+              echo "proxy.golang.org serves caddy/v2 v${UPSTREAM}"
               ;;
             404)
-              echo "published=false" >> "$GITHUB_OUTPUT"
-              echo "docker.io/library/caddy:${UPSTREAM}-builder is not published yet"
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "proxy.golang.org does not serve caddy/v2 v${UPSTREAM} yet"
               ;;
             *)
-              echo "published=false" >> "$GITHUB_OUTPUT"
-              echo "::warning::Could not confirm the base image for Caddy ${UPSTREAM} (HTTP ${code}) - keeping the current pin"
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::Could not confirm caddy/v2 v${UPSTREAM} on the Go module proxy (HTTP ${code}) - keeping the current pin"
               ;;
           esac
 
@@ -94,7 +94,7 @@ jobs:
         env:
           PINNED: ${{ steps.pinned.outputs.version }}
           UPSTREAM: ${{ steps.upstream.outputs.version }}
-          IMAGE_PUBLISHED: ${{ steps.image.outputs.published }}
+          MODULE_AVAILABLE: ${{ steps.module.outputs.available }}
         run: |
           set -euo pipefail
 
@@ -106,13 +106,13 @@ jobs:
               echo
               echo "No change. Dockerfile is already pinned to \`${PINNED}\`."
             } >> "$GITHUB_STEP_SUMMARY"
-          elif [ "${IMAGE_PUBLISHED}" != "true" ]; then
+          elif [ "${MODULE_AVAILABLE}" != "true" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Caddy ${UPSTREAM} is released but its Docker Hub image is missing - keeping ${PINNED} pinned."
+            echo "Caddy ${UPSTREAM} is not fetchable as a Go module yet - keeping ${PINNED} pinned."
             {
               echo "### Caddy version sync"
               echo
-              echo "Caddy \`${UPSTREAM}\` is released upstream, but \`caddy:${UPSTREAM}-builder\` is not on Docker Hub yet. Kept \`${PINNED}\` pinned; the next run retries."
+              echo "Caddy \`${UPSTREAM}\` is released upstream, but the Go module proxy does not serve \`v${UPSTREAM}\` yet. Kept \`${PINNED}\` pinned; the next run retries."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
