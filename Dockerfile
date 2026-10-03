@@ -1,8 +1,13 @@
 ARG CADDY_VERSION=2.11.6
+# Supplies the Go toolchain and xcaddy only; the build target is CADDY_VERSION
+# below. Leave this at an older release until a build fails on a newer Go.
+ARG CADDY_BUILDER_VERSION=2.11.6
 
-FROM caddy:${CADDY_VERSION}-builder AS builder
+FROM caddy:${CADDY_BUILDER_VERSION}-builder AS builder
 
-RUN xcaddy build \
+ARG CADDY_VERSION
+
+RUN xcaddy build v${CADDY_VERSION} \
 	--with github.com/lucaslorentz/caddy-docker-proxy/v2 \
 	--with github.com/caddy-dns/cloudflare \
 	--with github.com/WeidiDeng/caddy-cloudflare-ip \
